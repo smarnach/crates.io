@@ -20,7 +20,7 @@ pub fn show(req: &mut dyn Request) -> CargoResult<Response> {
         }
     };
 
-    let user = query.first::<User>(&conn)?;
+    let user = query.first::<User>(&*conn)?;
 
     #[derive(Serialize)]
     struct R {

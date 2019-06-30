@@ -230,7 +230,7 @@ impl User {
 
     /// Returns a link to this user's GitHub profile, or @ghost if the user
     /// has been deleted
-    fn url(&self) -> Cow<str> {
+    fn url(&self) -> Cow<'_, str> {
         if self.gh_deleted {
             Cow::Borrowed("https://github.com/ghost")
         } else {
@@ -240,7 +240,7 @@ impl User {
 
     /// Returns the user's name for display purposes. Typically the same as
     /// gh_login.
-    fn display_name(&self) -> Cow<str> {
+    fn display_name(&self) -> Cow<'_, str> {
         if self.gh_deleted {
             Cow::Owned(format!("{} (deleted)", self.gh_login))
         } else {
@@ -250,7 +250,7 @@ impl User {
 
     /// Returns the user's gh_login if they haven't been deleted, or a special
     /// identifier if they have.
-    fn login(&self) -> Cow<str> {
+    fn login(&self) -> Cow<'_, str> {
         if self.gh_deleted {
             Cow::Owned(format!("deleted_{}", self.id))
         } else {
