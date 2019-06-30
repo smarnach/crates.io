@@ -1,15 +1,14 @@
-use std::env;
 use std::path::Path;
 
 use crate::util::{bad_request, CargoResult};
-use dotenv::dotenv;
 
-use lettre::file::FileEmailTransport;
+use failure::Fail;
+use lettre::file::FileTransport;
 use lettre::smtp::authentication::{Credentials, Mechanism};
-use lettre::smtp::SmtpTransport;
-use lettre::EmailTransport;
+use lettre::smtp::SmtpClient;
+use lettre::{SendableEmail, Transport};
 
-use lettre_email::{Email, EmailBuilder};
+use lettre_email::Email;
 
 #[derive(Debug)]
 pub struct MailgunConfigVars {
@@ -19,12 +18,10 @@ pub struct MailgunConfigVars {
 }
 
 pub fn init_config_vars() -> Option<MailgunConfigVars> {
-    dotenv().ok();
-
     match (
-        env::var("MAILGUN_SMTP_LOGIN"),
-        env::var("MAILGUN_SMTP_PASSWORD"),
-        env::var("MAILGUN_SMTP_SERVER"),
+        dotenv::var("MAILGUN_SMTP_LOGIN"),
+        dotenv::var("MAILGUN_SMTP_PASSWORD"),
+        dotenv::var("MAILGUN_SMTP_SERVER"),
     ) {
         (Ok(login), Ok(password), Ok(server)) => Some(MailgunConfigVars {
             smtp_login: login,
@@ -40,23 +37,40 @@ fn build_email(
     subject: &str,
     body: &str,
     mailgun_config: &Option<MailgunConfigVars>,
-) -> CargoResult<Email> {
+) -> CargoResult<SendableEmail> {
     let sender = mailgun_config
         .as_ref()
         .map(|s| s.smtp_login.as_str())
-        .unwrap_or("Development Mode");
+        .unwrap_or("test@localhost");
 
-    let email = EmailBuilder::new()
+    #[allow(clippy::redundant_closure)]
+    let email = Email::builder()
         .to(recipient)
         .from(sender)
         .subject(subject)
         .body(body)
-        .build()?;
+        .build()
+        .map_err(|e| e.compat())?;
 
-    Ok(email)
+    Ok(email.into())
 }
 
-pub fn send_user_confirm_email(email: &str, user_name: &str, token: &str) -> CargoResult<()> {
+/// Attempts to send a confirmation email. Swallows all errors.
+///
+/// This function swallows any errors that occur while attempting to send the email. Some users
+/// have an invalid email set in their GitHub profile, and we should let them sign in even though
+/// we're trying to silently use their invalid address during signup and can't send them an email.
+/// Use `try_send_user_confirm_email` when the user is directly trying to set their email.
+pub fn send_user_confirm_email(email: &str, user_name: &str, token: &str) {
+    let _ = try_send_user_confirm_email(email, user_name, token);
+}
+
+/// Attempts to send a confirmation email and returns errors.
+///
+/// For use in cases where we want to fail if an email is bad because the user is directly trying
+/// to set their email correctly, as opposed to us silently trying to use the email from their
+/// GitHub profile during signup.
+pub fn try_send_user_confirm_email(email: &str, user_name: &str, token: &str) -> CargoResult<()> {
     // Create a URL with token string as path to send to user
     // If user clicks on path, look email/user up in database,
     // make sure tokens match
@@ -78,24 +92,45 @@ fn send_email(recipient: &str, subject: &str, body: &str) -> CargoResult<()> {
 
     match mailgun_config {
         Some(mailgun_config) => {
-            let mut transport = SmtpTransport::simple_builder(&mailgun_config.smtp_server)?
+            let mut transport = SmtpClient::new_simple(&mailgun_config.smtp_server)?
                 .credentials(Credentials::new(
                     mailgun_config.smtp_login,
                     mailgun_config.smtp_password,
                 ))
                 .smtp_utf8(true)
                 .authentication_mechanism(Mechanism::Plain)
-                .build();
+                .transport();
 
-            let result = transport.send(&email);
+            let result = transport.send(email);
             result.map_err(|_| bad_request("Error in sending email"))?;
         }
         None => {
-            let mut sender = FileEmailTransport::new(Path::new("/tmp"));
-            let result = sender.send(&email);
+            let mut sender = FileTransport::new(Path::new("/tmp"));
+            let result = sender.send(email);
             result.map_err(|_| bad_request("Email file could not be generated"))?;
         }
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sending_to_invalid_email_fails() {
+        let result = send_email(
+            "String.Format(\"{0}.{1}@live.com\", FirstName, LastName)",
+            "test",
+            "test",
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn sending_to_valid_email_succeeds() {
+        let result = send_email("someone@example.com", "test", "test");
+        assert!(result.is_ok());
+    }
 }

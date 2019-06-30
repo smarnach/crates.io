@@ -3,7 +3,7 @@
 <div id='crates-heading' data-test-heading>
     <div class="wide">
         <div class='info'>
-            {{svg-jar "crate"}}
+            {{svg-jar "crate" class='crate-icon'}}
             <h1 data-test-crate-name>{{ crate.name }}</h1>
             <h2 data-test-crate-version>{{ currentVersion.num }}</h2>
         </div>
@@ -233,7 +233,7 @@
                     <h3>Dev-Dependencies</h3>
                     <ul>
                         {{#each currentDevDependencies as |dep|}}
-                            {{link-to-dep dep=dep}}
+                            {{link-to-dep tagName="li" dep=dep}}
                         {{/each}}
                     </ul>
                 </div>

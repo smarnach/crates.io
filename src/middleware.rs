@@ -9,6 +9,7 @@ pub use self::current_user::CurrentUser;
 pub use self::debug::*;
 pub use self::ember_index_rewrite::EmberIndexRewrite;
 pub use self::head::Head;
+use self::log_connection_pool_status::LogConnectionPoolStatus;
 pub use self::security_headers::SecurityHeaders;
 pub use self::static_or_continue::StaticOrContinue;
 
@@ -19,6 +20,7 @@ mod debug;
 mod ember_index_rewrite;
 mod ensure_well_formed_500;
 mod head;
+mod log_connection_pool_status;
 mod log_request;
 mod require_user_agent;
 mod security_headers;
@@ -53,6 +55,10 @@ pub fn build_middleware(app: Arc<App>, endpoints: R404) -> MiddlewareBuilder {
         m.add(DebugRequest);
     }
 
+    if env::var_os("LOG_CONNECTION_POOL_STATUS").is_some() {
+        m.add(LogConnectionPoolStatus::new(&app));
+    }
+
     m.add(ConditionalGet);
 
     m.add(Cookie::new());
@@ -85,10 +91,8 @@ pub fn build_middleware(app: Arc<App>, endpoints: R404) -> MiddlewareBuilder {
         let ips = ip_list.split(',').map(String::from).collect();
         m.around(block_ips::BlockIps::new(ips));
     }
-    // Note: Temporarily disabled because cargo-vendor doesn't include a
-    // User-Agent header and Rust's CI broke. If this is still commented out
-    // by Nov 7, 2018 ping the crates.io team.
-    // m.around(require_user_agent::RequireUserAgent::default());
+
+    m.around(require_user_agent::RequireUserAgent::default());
 
     if env != Env::Test {
         m.around(log_request::LogRequests::default());
