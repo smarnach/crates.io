@@ -75,10 +75,15 @@ impl TableConfig {
     }
 }
 
-/// Maps table names to the respective configurations. Used to load `dump_db.toml`.
+/// Representation of the configuration file dump-db.toml.
+///
+/// tables – maps table names to the respective configurations.
+/// private_tables – names of tables to treat as completely private.
 #[derive(Clone, Debug, Default, Deserialize)]
-#[serde(transparent)]
-struct VisibilityConfig(BTreeMap<String, TableConfig>);
+struct VisibilityConfig {
+    tables: BTreeMap<String, TableConfig>,
+    private_tables: Vec<String>,
+}
 
 /// Subset of the configuration data to be passed on to the Handlbars template.
 #[derive(Debug, Serialize)]
@@ -94,7 +99,7 @@ impl VisibilityConfig {
         let mut result = Vec::new();
         let mut num_deps = BTreeMap::new();
         let mut rev_deps: BTreeMap<_, Vec<_>> = BTreeMap::new();
-        for (table, config) in self.0.iter() {
+        for (table, config) in self.tables.iter() {
             num_deps.insert(table.as_str(), config.dependencies.len());
             for dep in &config.dependencies {
                 rev_deps
@@ -118,7 +123,7 @@ impl VisibilityConfig {
             }
         }
         assert_eq!(
-            self.0.len(),
+            self.tables.len(),
             result.len(),
             "circular dependencies in database dump configuration detected",
         );
@@ -129,7 +134,7 @@ impl VisibilityConfig {
         let tables = self
             .topological_sort()
             .into_iter()
-            .filter_map(|table| self.0[table].handlebars_context(table))
+            .filter_map(|table| self.tables[table].handlebars_context(table))
             .collect();
         HandlebarsContext { tables }
     }
@@ -161,18 +166,28 @@ mod tests {
     use crate::test_util::pg_connection;
     use diesel::prelude::*;
     use std::collections::HashSet;
-    use std::iter::FromIterator;
 
     /// Test whether the visibility configuration matches the schema of the
     /// test database.
     #[test]
-    #[should_panic]
     fn check_visibility_config() {
         let conn = pg_connection();
-        let db_columns = HashSet::<Column>::from_iter(get_db_columns(&conn));
-        let vis_columns = toml::from_str::<VisibilityConfig>(include_str!("dump-db.toml"))
-            .unwrap()
-            .0
+        let config: VisibilityConfig = toml::from_str(include_str!("dump-db.toml")).unwrap();
+        let private_patterns: Vec<_> = config
+            .private_tables
+            .iter()
+            .map(|s| glob::Pattern::new(s).unwrap())
+            .collect();
+        let db_columns: HashSet<Column> = get_db_columns(&conn)
+            .into_iter()
+            .filter(|column| {
+                !private_patterns
+                    .iter()
+                    .any(|pattern| pattern.matches(&column.table_name))
+            })
+            .collect();
+        let vis_columns = config
+            .tables
             .iter()
             .flat_map(|(table, config)| {
                 config.columns.iter().map(move |(column, _)| Column {
@@ -246,11 +261,11 @@ mod tests {
     #[test]
     fn test_topological_sort() {
         let mut config = VisibilityConfig::default();
-        let tables = &mut config.0;
+        let tables = &mut config.tables;
         tables.insert("a".to_owned(), table_config_with_deps(&["b", "c"]));
         tables.insert("b".to_owned(), table_config_with_deps(&["c", "d"]));
         tables.insert("c".to_owned(), table_config_with_deps(&["d"]));
-        config.0.insert("d".to_owned(), table_config_with_deps(&[]));
+        tables.insert("d".to_owned(), table_config_with_deps(&[]));
         assert_eq!(config.topological_sort(), ["d", "c", "b", "a"]);
     }
 
@@ -258,7 +273,7 @@ mod tests {
     #[should_panic]
     fn topological_sort_panics_for_cyclic_dependency() {
         let mut config = VisibilityConfig::default();
-        let tables = &mut config.0;
+        let tables = &mut config.tables;
         tables.insert("a".to_owned(), table_config_with_deps(&["b"]));
         tables.insert("b".to_owned(), table_config_with_deps(&["a"]));
         config.topological_sort();
