@@ -34,7 +34,7 @@ private_tables = [
     "readme_renderings",
     "version_owner_actions",
     "versions_published_by",
-    "version_downloads*",
+    "version_downloads_*",
 ]
 
 [tables.badges]
@@ -148,6 +148,20 @@ id = "public"
 version_id = "public"
 user_id = "private"
 name = "public"
+
+[tables.version_downloads]
+# The version_downloads table is partitioned, so the COPY statements used for
+# other tables does not work for this table. By using a filter of "TRUE", we
+# trigger the use of a subquery in the COPY statement:
+#
+#     \copy (SELECT ... FROM "version_downloads" WHERE TRUE) TO ...
+filter = "TRUE"
+dependencies = ["versions"]
+[tables.version_downloads.columns]
+version_id = "public"
+downloads = "public"
+counted = "private"
+date = "public"
 
 [tables.versions]
 dependencies = ["crates", "users"]
